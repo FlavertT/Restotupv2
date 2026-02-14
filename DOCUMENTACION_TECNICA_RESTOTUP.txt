@@ -1,0 +1,1227 @@
+═══════════════════════════════════════════════════════════════════════════════
+                    RESTOTUP - SISTEMA DE GESTIÓN DE RESTAURANTE
+                        DOCUMENTACIÓN TÉCNICA COMPLETA
+═══════════════════════════════════════════════════════════════════════════════
+
+ÍNDICE
+══════
+1. Descripción General del Sistema
+2. Arquitectura y Tecnologías Utilizadas
+3. Estructura de la Base de Datos
+4. Módulos del Sistema
+5. Funcionalidades Principales
+6. Sistema de Alertas Telegram
+7. Flujo de Trabajo del Sistema
+8. Decisiones de Diseño y Justificación
+9. Instalación y Configuración
+10. Conclusiones
+
+
+═══════════════════════════════════════════════════════════════════════════════
+1. DESCRIPCIÓN GENERAL DEL SISTEMA
+═══════════════════════════════════════════════════════════════════════════════
+
+RestoTup es un sistema de gestión integral para restaurantes desarrollado con 
+Django (Python), que permite administrar todos los aspectos operativos de un
+establecimiento gastronómico.
+
+OBJETIVO PRINCIPAL:
+Proporcionar una solución completa para:
+- Gestión de inventario y productos
+- Control de recetas y costos
+- Administración de pedidos
+- Gestión de clientes (minoristas y empresariales)
+- Gestión de personal
+- Sistema de alertas automáticas
+- Reportes mensuales de uso y ventas
+
+ALCANCE:
+El sistema está diseñado para restaurantes pequeños a medianos que necesitan
+control detallado de sus operaciones, con énfasis en:
+- Trazabilidad de ingredientes
+- Control de costos por receta
+- Gestión de stock en tiempo real
+- Análisis de consumo mensual
+
+
+═══════════════════════════════════════════════════════════════════════════════
+2. ARQUITECTURA Y TECNOLOGÍAS UTILIZADAS
+═══════════════════════════════════════════════════════════════════════════════
+
+PATRÓN DE ARQUITECTURA: MTV (Model-Template-View)
+══════════════════════════════════════════════════
+
+Django implementa una variación del patrón MVC llamada MTV:
+- MODEL (Modelo): Gestión de datos y lógica de negocio
+- TEMPLATE (Plantilla): Presentación y interfaz de usuario
+- VIEW (Vista): Lógica de control y procesamiento de requests
+
+JUSTIFICACIÓN: MTV separa claramente las responsabilidades, facilitando el
+mantenimiento y escalabilidad del sistema.
+
+
+TECNOLOGÍAS UTILIZADAS
+═══════════════════════
+
+Back-end:
+---------
+- Python 3.14.0: Lenguaje principal por su sintaxis clara y productividad
+- Django 4.2.26: Framework web robusto con ORM integrado y seguridad built-in
+- SQLite3: Base de datos relacional ligera, perfecta para desarrollo/testing
+
+  JUSTIFICACIÓN SQLite:
+  * No requiere servidor de BD separado
+  * Ideal para pequeños/medianos volúmenes de datos
+  * Fácil portabilidad (archivo único)
+  * Para producción se puede migrar fácilmente a PostgreSQL/MySQL
+
+Librerías Adicionales:
+---------------------
+- python-decouple: Gestión segura de variables de entorno (.env)
+- requests: Consumo de API de Telegram para notificaciones
+
+  JUSTIFICACIÓN python-decouple:
+  * Separa configuración del código (12 Factor App)
+  * Tokens sensibles (Telegram) no quedan hardcodeados
+  * Facilita despliegue en diferentes entornos
+
+Front-end:
+----------
+- HTML5: Estructura semántica
+- CSS3: Estilos personalizados con gradientes y efectos modernos
+- Font Awesome 6.0: Iconografía profesional
+- Google Fonts (Inter): Tipografía moderna y legible
+
+  DECISIÓN DE DISEÑO: No se utilizó framework CSS (Bootstrap, Tailwind) para
+  tener control total sobre el diseño y optimizar el rendimiento evitando CSS
+  innecesario.
+
+Configuración Regional:
+----------------------
+- LANGUAGE_CODE: 'es-ar' (Español Argentina)
+- TIME_ZONE: 'America/Argentina/Buenos_Aires'
+- Esto asegura formatos de fecha/hora correctos para usuarios argentinos
+
+
+═══════════════════════════════════════════════════════════════════════════════
+3. ESTRUCTURA DE LA BASE DE DATOS
+═══════════════════════════════════════════════════════════════════════════════
+
+El sistema está organizado en 5 aplicaciones Django independientes pero
+relacionadas:
+
+
+APLICACIÓN: PRODUCTOS
+══════════════════════
+
+Modelos:
+--------
+
+1. CategoriaProducto
+   - Propósito: Clasificar productos para mejor organización
+   - Campos:
+     * nombre: CharField con choices (ingredientes, limpieza, packaging, 
+       bebidas, otros)
+     * descripcion: TextField opcional
+   
+   DECISIÓN: Usar choices en lugar de tabla abierta para mantener categorías
+   controladas y evitar duplicados.
+
+2. UnidadMedida
+   - Propósito: Estandarizar mediciones (kg, litros, unidades)
+   - Campos:
+     * nombre: Nombre completo (ej: "Kilogramos")
+     * abreviatura: Versión corta (ej: "kg")
+   
+   DECISIÓN: Tabla separada permite agregar nuevas unidades sin modificar código.
+
+3. Producto
+   - Propósito: Inventario principal del restaurante
+   - Campos:
+     * nombre: Identificación del producto
+     * categoria: FK a CategoriaProducto (PROTECT - no permite borrar 
+       categorías en uso)
+     * unidad_medida: FK a UnidadMedida (PROTECT)
+     * stock_actual: DecimalField (precisión 2 decimales para cantidades exactas)
+     * stock_minimo: Umbral para alertas
+     * precio_unitario: Costo del producto
+     * activo: BooleanField para desactivar sin borrar
+     * fecha_creacion/actualizacion: Timestamps automáticos
+   
+   Propiedades calculadas:
+     * stock_bajo: Valida si stock_actual <= stock_minimo
+     * porcentaje_stock: Calcula (stock_actual / stock_minimo) * 100
+   
+   DECISIONES CLAVE:
+   - DecimalField en lugar de FloatField para evitar errores de redondeo en
+     cálculos monetarios
+   - on_delete=PROTECT en ForeignKeys para prevenir borrado accidental de datos
+     relacionados
+   - Campo 'activo' permite "soft delete" manteniendo histórico
+
+
+APLICACIÓN: RECETAS
+════════════════════
+
+Modelos:
+--------
+
+1. Receta
+   - Propósito: Platos que se ofrecen a clientes
+   - Campos:
+     * nombre: Nombre del plato
+     * descripcion: Detalles de preparación
+     * precio_venta: Precio al cliente
+     * activa: Control de disponibilidad
+     * fecha_creacion: Timestamp
+   
+   Métodos:
+     * calcular_costo(): Suma precio_unitario * cantidad de todos ingredientes
+     * verificar_stock_disponible(cantidad): Valida stock antes de preparar
+   
+   DECISIÓN: Separar precio_venta de costo permite análisis de rentabilidad
+
+2. IngredienteReceta
+   - Propósito: Relacionar recetas con productos (tabla intermedia)
+   - Campos:
+     * receta: FK a Receta (CASCADE - si borro receta, borro ingredientes)
+     * producto: FK a Producto (PROTECT - no puedo borrar producto usado)
+     * cantidad: Cantidad necesaria del producto
+   
+   DECISIÓN ARQUITECTURAL:
+   - Relación Many-to-Many personalizada (en lugar de ManyToManyField simple)
+     permite almacenar cantidad específica para cada ingrediente
+   - unique_together evita duplicar mismo producto en una receta
+
+
+APLICACIÓN: CLIENTES
+═══════════════════════
+
+Modelos:
+--------
+
+1. Cliente (Abstracto)
+   - Propósito: Modelo base con campos comunes
+   - Campos compartidos: nombre, direccion, numero, activo, fecha_creacion
+   
+   PATRÓN: Herencia de modelos Django (Abstract Base Class)
+
+2. ClienteMinorista (Hereda de Cliente)
+   - Propósito: Clientes individuales
+   - Solo hereda campos base, no requiere campos adicionales
+
+3. ClienteEmpresa (Hereda de Cliente)
+   - Propósito: Clientes corporativos
+   - Campos adicionales:
+     * cuit: Identificación fiscal (unique)
+     * razon_social: Nombre legal
+   
+   DECISIÓN ARQUITECTURAL:
+   - Usar herencia en lugar de campo "tipo_cliente" porque:
+     * Evita campos NULL innecesarios (CUIT en minoristas)
+     * Permite agregar métodos específicos por tipo
+     * Mejor integridad referencial
+
+
+APLICACIÓN: PERSONAL
+═══════════════════════
+
+Modelo:
+-------
+
+Empleado
+   - Propósito: Registro de empleados del restaurante
+   - Campos:
+     * nombre, apellido: Identificación
+     * rol: CharField con choices (jefe, encargado, cocina, mostrador)
+     * telefono, email: Contacto
+     * fecha_ingreso: Control de antigüedad
+     * activo: Control de empleados actuales
+   
+   Propiedades:
+     * nombre_completo: Concatena nombre + apellido
+   
+   DECISIÓN: Campo 'rol' con choices en lugar de tabla separada porque los
+   roles son fijos y no cambian frecuentemente.
+
+
+APLICACIÓN: PEDIDOS
+════════════════════
+
+Modelos:
+--------
+
+1. Pedido
+   - Propósito: Órdenes de clientes
+   - Features especiales:
+     * Generic Foreign Key: Permite relacionar con ClienteMinorista O
+       ClienteEmpresa sin duplicar estructura
+     * Campos:
+       - content_type: Identifica tipo de cliente
+       - object_id: ID del cliente específico
+       - cliente: GenericForeignKey virtual
+       - empleado: Quien tomó el pedido
+       - estado: CharField con choices (pendiente, en_preparacion, 
+         completado, cancelado)
+       - total: DecimalField calculado
+       - observaciones: Notas adicionales
+   
+   Métodos:
+     * calcular_total(): Suma subtotales de todos los ItemPedido
+     * get_nombre_cliente(): Maneja diferencia entre minorista y empresa
+   
+   DECISIÓN TÉCNICA AVANZADA - Generic Foreign Keys:
+   ------------------------------------------------
+   Permite que un pedido apunte a diferentes tipos de clientes sin crear
+   dos tablas separadas. Alternativas descartadas:
+   - FK a ambos tipos (uno NULL): Confuso y propenso a errores
+   - Unificar clientes: Perdería ventajas de la herencia
+   
+   Ventaja: Flexibilidad - podríamos agregar nuevos tipos de clientes sin
+   modificar modelo Pedido.
+
+2. ItemPedido
+   - Propósito: Líneas individuales del pedido (qué recetas se pidieron)
+   - Campos:
+     * pedido: FK a Pedido (CASCADE - items se borran con el pedido)
+     * receta: FK a Receta (PROTECT - no borrar recetas usadas)
+     * cantidad: Unidades pedidas
+     * precio_unitario: Precio al momento del pedido
+   
+   Propiedades:
+     * subtotal: precio_unitario * cantidad
+   
+   DECISIÓN CRÍTICA:
+   - Guardar precio_unitario en el momento del pedido (no usar FK.precio_venta)
+     porque los precios pueden cambiar y necesitamos histórico exacto.
+   - Override del método save() para capturar precio automáticamente
+
+3. UsoProducto
+   - Propósito: Registro histórico para reportes mensuales
+   - Campos:
+     * producto: FK a Producto
+     * cantidad: Cantidad usada
+     * mes, anio: Para agrupar en reportes
+     * pedido: Trazabilidad opcional
+     * fecha: Timestamp
+   
+   DECISIÓN: Tabla separada de histórico permite:
+   - Reportes rápidos sin recalcular
+   - Mantener datos aunque se borren pedidos (si pedido fuera requerido)
+   - Análisis temporal de tendencias
+
+
+DIAGRAMA DE RELACIONES
+═══════════════════════
+
+CategoriaProducto ─┐
+                   │
+UnidadMedida ──────┼──> Producto ──┐
+                   │                │
+                   │                ├──> IngredienteReceta <── Receta
+                   │                │                           │
+                   │                └──> UsoProducto           │
+                   │                                            │
+Empleado ──────────┼──────────────────> Pedido <───────────────┤
+                   │                      │                     │
+ClienteMinorista ──┤                      │                     │
+                   │                      └──> ItemPedido ──────┘
+ClienteEmpresa ────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+4. MÓDULOS DEL SISTEMA
+═══════════════════════════════════════════════════════════════════════════════
+
+PRODUCTOS (/productos/)
+════════════════════════
+
+Funcionalidades:
+- Lista de productos con filtros por categoría
+- Crear/editar/eliminar productos
+- Indicadores visuales de stock bajo
+- Búsqueda por nombre
+
+Vistas principales:
+- lista_productos: Muestra todos productos con opción de filtrar
+- crear_producto: Formulario de alta
+- editar_producto: Modificación de datos
+- eliminar_producto: Baja lógica (activo=False)
+
+Características UI:
+- Cards con gradientes de color según nivel de stock
+- Badges de alerta para stock bajo
+- Iconos Font Awesome para mejor UX
+
+
+RECETAS (/recetas/)
+═══════════════════
+
+Funcionalidades:
+- Gestión completa de recetas
+- Asignación de ingredientes con cantidades
+- Cálculo automático de costos
+- Validación de stock antes de preparar
+
+Vistas principales:
+- lista_recetas: Catálogo de platos
+- crear_receta: Alta de nueva receta
+- receta_detail: Vista detallada con ingredientes y costos
+- editar_receta: Modificación
+- agregar_ingrediente: Añadir productos a receta
+- eliminar_ingrediente: Quitar ingredientes
+
+Features destacadas:
+- Cálculo en tiempo real de costo total
+- Comparación costo vs precio de venta (margen)
+- Verificación automática de disponibilidad de stock
+
+
+CLIENTES (/clientes/)
+══════════════════════
+
+Funcionalidades:
+- Gestión separada de minoristas y empresas
+- Alta/baja/modificación
+- Listados filtrados
+
+Vistas principales:
+- lista_clientes_minoristas / lista_clientes_empresas: Listados separados
+- crear_cliente_minorista / crear_cliente_empresa: Forms específicos
+- editar_cliente_X: Modificaciones
+- eliminar_cliente_X: Bajas lógicas
+
+DECISIÓN UI:
+Separar visualmente los tipos de cliente facilita la operación diaria y evita
+confusión entre requisitos (CUIT para empresas).
+
+
+PERSONAL (/personal/)
+══════════════════════
+
+Funcionalidades:
+- Registro de empleados
+- Asignación de roles
+- Control de activos/inactivos
+
+Vistas principales:
+- lista_empleados: Roster completo
+- crear_empleado: Alta
+- editar_empleado: Modificación
+- eliminar_empleado: Baja lógica
+
+Feature importante:
+- Filtro por rol para asignar responsabilidades
+
+
+PEDIDOS (/pedidos/)
+════════════════════
+
+Funcionalidades:
+- Creación de pedidos (selección cliente + recetas)
+- Gestión de estados (workflow)
+- Cálculo automático de totales
+- Descuento automático de stock
+- Reportes mensuales
+
+Vistas principales:
+- lista_pedidos: Todos los pedidos con filtros por estado
+- crear_pedido: Wizard de creación
+- pedido_detail: Vista detallada
+- cambiar_estado_pedido: Workflow management
+- reportes_mensuales: Análisis de uso y ventas
+
+LÓGICA DE NEGOCIO CRÍTICA:
+--------------------------
+
+Al completar un pedido (cambiar a estado 'completado'):
+1. Se descuenta stock de productos (mediante ingredientes de recetas)
+2. Se registra uso en tabla UsoProducto para reportes
+3. Se verifica stock mínimo y dispara alerta Telegram si necesario
+4. Se actualiza total del pedido
+
+Código en pedidos/views.py::cambiar_estado_pedido():
+```python
+if nuevo_estado == 'completado':
+    for item in pedido.items.all():
+        for ingrediente in item.receta.ingredientes.all():
+            producto = ingrediente.producto
+            cantidad_total = ingrediente.cantidad * item.cantidad
+            producto.stock_actual -= cantidad_total
+            producto.save()
+            
+            # Registrar uso para reportes
+            UsoProducto.objects.create(...)
+            
+            # Verificar stock bajo
+            if producto.stock_bajo:
+                enviar_alerta_telegram(producto)
+```
+
+
+DASHBOARD (/)
+══════════════
+
+Funcionalidades:
+- Vista general del estado del sistema
+- Métricas rápidas (total productos, recetas, clientes, pedidos)
+- Accesos directos a funciones principales
+- Alertas de stock bajo
+- Indicador de empleados activos
+
+DECISIÓN UX:
+Dashboard como landing page permite vista panorámica inmediata del negocio.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+5. FUNCIONALIDADES PRINCIPALES
+═══════════════════════════════════════════════════════════════════════════════
+
+GESTIÓN DE INVENTARIO
+═══════════════════════
+
+Control de Stock en Tiempo Real:
+- Actualización automática al completar pedidos
+- Cálculo de stock necesario por receta
+- Validación antes de confirmar pedido
+- Indicadores visuales (colores) según nivel
+
+Alertas de Stock Bajo:
+- Verificación automática al descontar stock
+- Comparación con stock_minimo
+- Notificación Telegram inmediata
+
+
+COSTEO DE RECETAS
+═══════════════════
+
+Sistema de Cálculo Multinivel:
+1. Precio base de productos (precio_unitario)
+2. Cantidad de cada ingrediente en receta
+3. Suma total = COSTO DE RECETA
+4. Comparación con precio_venta = MARGEN
+
+Fórmula implementada:
+```
+Costo_Receta = Σ (Producto.precio_unitario * IngredienteReceta.cantidad)
+Margen = ((precio_venta - Costo_Receta) / precio_venta) * 100
+```
+
+Ventaja comercial: Permite decisiones informadas sobre pricing
+
+
+WORKFLOW DE PEDIDOS
+════════════════════
+
+Estados del Pedido:
+1. PENDIENTE: Cliente ordenó, aún no se prepara
+2. EN_PREPARACION: Cocina está trabajando
+3. COMPLETADO: Entregado y cobrado
+4. CANCELADO: Anulado
+
+Transiciones válidas:
+- pendiente → en_preparacion
+- pendiente → cancelado
+- en_preparacion → completado
+- en_preparacion → cancelado
+
+DECISIÓN: No permitir cambios retroactivos (completado → pendiente) para
+mantener integridad del stock y reportes.
+
+
+REPORTES MENSUALES
+═══════════════════
+
+Vista de Análisis:
+- Selección de mes/año mediante dropdowns
+- Total de pedidos completados en el período
+- Total vendido (suma de totales de pedidos)
+- Ranking de productos más utilizados
+
+Query optimizada para performance:
+```python
+productos_usados = UsoProducto.objects.filter(
+    mes=mes, anio=anio
+).values(
+    'producto__nombre',
+    'producto__unidad_medida__abreviatura'
+).annotate(
+    total_usado=Sum('cantidad')
+).order_by('-total_usado')[:10]
+```
+
+DECISIÓN: Usar tabla UsoProducto precalculada en lugar de recorrer todos
+los pedidos cada vez (performance O(n) vs O(n²)).
+
+
+═══════════════════════════════════════════════════════════════════════════════
+6. SISTEMA DE ALERTAS TELEGRAM
+═══════════════════════════════════════════════════════════════════════════════
+
+INTEGRACIÓN CON TELEGRAM BOT API
+══════════════════════════════════
+
+Configuración (settings.py):
+```python
+TELEGRAM_BOT_TOKEN = config('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = config('TELEGRAM_CHAT_ID')
+STOCK_MINIMO_ALERTA = 10
+```
+
+Función de Envío (utils.py):
+```python
+import requests
+
+def enviar_alerta_telegram(producto):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    mensaje = f"🚨 ALERTA DE STOCK BAJO\n\n"
+              f"Producto: {producto.nombre}\n"
+              f"Stock actual: {producto.stock_actual} {producto.unidad_medida}\n"
+              f"Stock mínimo: {producto.stock_minimo}"
+    
+    requests.post(url, data={
+        'chat_id': CHAT_ID,
+        'text': mensaje,
+        'parse_mode': 'HTML'
+    })
+```
+
+JUSTIFICACIÓN TÉCNICA:
+---------------------
+
+¿Por qué Telegram y no email/SMS?
+- Telegram es gratuito (SMS cuesta)
+- Notificaciones push inmediatas
+- No requiere servidor de email
+- API simple sin autenticación compleja
+- Permite crear bots sin coding en Telegram
+
+¿Por qué no WhatsApp Business API?
+- Requiere aprobación de Meta
+- Costos por mensaje
+- Setup más complejo
+
+Flujo de Alerta:
+1. Usuario completa pedido
+2. Sistema descuenta stock
+3. Verifica if producto.stock_actual <= producto.stock_minimo
+4. Si cumple: POST a Telegram API
+5. Bot envía mensaje al chat configurado
+
+CONFIGURACIÓN INICIAL:
+1. Crear bot en Telegram (@BotFather)
+2. Obtener token
+3. Crear grupo/canal
+4. Agregar bot al grupo
+5. Obtener chat_id
+6. Configurar en .env
+
+
+═══════════════════════════════════════════════════════════════════════════════
+7. FLUJO DE TRABAJO DEL SISTEMA
+═══════════════════════════════════════════════════════════════════════════════
+
+CASO DE USO COMPLETO: ATENDER UN PEDIDO
+════════════════════════════════════════
+
+Escenario: Cliente pide 2 hamburguesas y 1 ensalada
+
+PASO 1: Login
+-------------
+- Usuario ingresa a sistema
+- Django Auth valida credenciales
+- Redirige a dashboard
+
+PASO 2: Verificar Stock
+-----------------------
+- Empleado revisa /productos/ para confirmar ingredientes disponibles
+- Sistema muestra badges visuales de stock
+
+PASO 3: Crear Pedido
+--------------------
+URL: /pedidos/crear/
+
+Substeps:
+a) Seleccionar tipo de cliente (minorista/empresa)
+b) Seleccionar cliente específico del dropdown
+c) Sistema carga formulario de items
+d) Empleado agrega:
+   - Receta: Hamburguesa, Cantidad: 2
+   - Receta: Ensalada, Cantidad: 1
+e) Sistema calcula automáticamente:
+   - Subtotal item 1: precio_venta(Hamburguesa) * 2
+   - Subtotal item 2: precio_venta(Ensalada) * 1
+   - Total pedido: suma subtotales
+f) Empleado guarda (estado inicial: PENDIENTE)
+
+Código ejecutado:
+```python
+pedido = Pedido.objects.create(
+    cliente=cliente_seleccionado,
+    empleado=request.user.empleado,
+    estado='pendiente'
+)
+
+for item in form.cleaned_data['items']:
+    ItemPedido.objects.create(
+        pedido=pedido,
+        receta=item['receta'],
+        cantidad=item['cantidad'],
+        precio_unitario=item['receta'].precio_venta
+    )
+
+pedido.calcular_total()
+pedido.save()
+```
+
+PASO 4: Pasar a Cocina
+----------------------
+URL: /pedidos/{id}/cambiar-estado/
+
+- Encargado cambia estado a 'en_preparacion'
+- Sistema actualiza timestamp
+
+PASO 5: Completar Pedido
+-------------------------
+- Cuando plato está listo y cobrado, cambiar a 'completado'
+
+LÓGICA EJECUTADA (CRÍTICA):
+```python
+if nuevo_estado == 'completado':
+    mes_actual = timezone.now().month
+    anio_actual = timezone.now().year
+    
+    for item in pedido.items.all():
+        receta = item.receta
+        cantidad_platos = item.cantidad
+        
+        for ingrediente in receta.ingredientes.all():
+            producto = ingrediente.producto
+            cantidad_necesaria = ingrediente.cantidad * cantidad_platos
+            
+            # Descontar stock
+            producto.stock_actual -= cantidad_necesaria
+            producto.save()
+            
+            # Registrar uso mensual
+            UsoProducto.objects.create(
+                producto=producto,
+                cantidad=cantidad_necesaria,
+                mes=mes_actual,
+                anio=anio_actual,
+                pedido=pedido
+            )
+            
+            # Verificar alerta
+            if producto.stock_actual <= producto.stock_minimo:
+                enviar_alerta_telegram(producto)
+```
+
+Resultado:
+- Stock actualizado en DB
+- Registro histórico creado
+- Alerta Telegram enviada (si aplica)
+- Pedido marcado como completado
+
+
+CASO DE USO: CONSULTAR REPORTE MENSUAL
+═══════════════════════════════════════
+
+URL: /pedidos/reportes/
+
+PASO 1: Seleccionar Período
+---------------------------
+- Usuario selecciona mes (1-12) y año
+- Form GET con parámetros: ?mes=11&anio=2025
+
+PASO 2: Sistema Procesa
+-----------------------
+```python
+pedidos_mes = Pedido.objects.filter(
+    fecha__month=mes,
+    fecha__year=anio,
+    estado='completado'
+).aggregate(
+    total_pedidos=Count('id'),
+    total_vendido=Sum('total')
+)
+
+productos_usados = UsoProducto.objects.filter(
+    mes=mes,
+    anio=anio
+).values(
+    'producto__nombre',
+    'producto__unidad_medida__abreviatura'
+).annotate(
+    total_usado=Sum('cantidad')
+).order_by('-total_usado')[:10]
+```
+
+PASO 3: Renderizar Resultado
+----------------------------
+Template muestra:
+- Cards con métricas (pedidos, ventas)
+- Tabla con top 10 productos más usados
+- Emojis de medallas (🥇🥈🥉) para top 3
+
+OPTIMIZACIÓN:
+Usar aggregate/annotate de Django ORM en lugar de loops Python resulta en
+queries SQL optimizadas con GROUP BY y SUM.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+8. DECISIONES DE DISEÑO Y JUSTIFICACIÓN
+═══════════════════════════════════════════════════════════════════════════════
+
+ARQUITECTURA
+═════════════
+
+1. ¿Por qué Django y no Flask/FastAPI?
+   
+   Django ofrece:
+   - ORM completo (evita escribir SQL manual)
+   - Admin automático para testing rápido
+   - Sistema de autenticación incluido
+   - Migraciones de BD automáticas
+   - Templating engine integrado
+   
+   Flask requeriría:
+   - Instalar ORM separado (SQLAlchemy)
+   - Implementar auth manualmente
+   - Configurar todo desde cero
+   
+   Conclusión: Django = desarrollo más rápido para MVPs
+
+
+2. ¿Por qué SQLite y no PostgreSQL/MySQL?
+   
+   SQLite ventajas:
+   - Archivo único, fácil backup (copiar db.sqlite3)
+   - No requiere servidor corriendo
+   - Perfecta para desarrollo
+   - Migración sencilla a otros DB cuando escale
+   
+   Desventajas (aceptadas para este alcance):
+   - No soporta concurrencia alta
+   - Algunas features SQL limitadas
+   
+   Decisión: Suficiente para restaurante pequeño/mediano
+
+
+3. ¿Por qué Generic Foreign Keys para clientes?
+   
+   Alternativas evaluadas:
+   
+   a) Dos FK (cliente_minorista, cliente_empresa):
+      Pros: Simple
+      Cons: Siempre uno NULL, validaciones complejas
+   
+   b) Unificar en tabla Cliente con tipo:
+      Pros: Un solo FK
+      Cons: Campos opcionales (CUIT a veces NULL), pierde herencia
+   
+   c) Generic FK (ELEGIDO):
+      Pros: Flexible, permite agregar tipos sin cambiar Pedido
+      Cons: Queries un poco más complejas
+   
+   Decisión: Flexibilidad futura > simplicidad inmediata
+
+
+BASE DE DATOS
+══════════════
+
+4. ¿DecimalField o FloatField para dinero?
+   
+   SIEMPRE DecimalField porque:
+   - Float tiene errores de redondeo (0.1 + 0.2 != 0.3)
+   - Decimal es exacto
+   - Crítico para cálculos financieros
+   
+   Ejemplo bug con Float:
+   ```python
+   >>> 0.1 + 0.2
+   0.30000000000000004  # ERROR!
+   
+   >>> from decimal import Decimal
+   >>> Decimal('0.1') + Decimal('0.2')
+   Decimal('0.3')  # CORRECTO
+   ```
+
+
+5. ¿Por qué on_delete=PROTECT en ForeignKeys?
+   
+   Previene dataloss accidental:
+   - No puedo borrar Producto si está en Receta
+   - No puedo borrar Receta si está en Pedido
+   
+   Alternativas:
+   - CASCADE: Borraría en cascada (peligroso)
+   - SET_NULL: Perdería referencia (malo para auditoría)
+   
+   Decisión: Integridad > comodidad
+
+
+6. ¿Soft delete (activo=False) o DELETE real?
+   
+   Soft delete porque:
+   - Mantiene histórico
+   - Permite "reactivar" si fue error
+   - Reportes pueden incluir datos históricos
+   - Auditoría completa
+   
+   Trade-off: BD crece más, pero storage es barato
+
+
+INTERFAZ DE USUARIO
+════════════════════
+
+7. ¿Por qué CSS custom y no Bootstrap?
+   
+   - Control total sobre diseño
+   - Menos KB descargados (performance)
+   - Aprendizaje de CSS puro
+   - No depender de versiones de frameworks
+   
+   Trade-off: Más trabajo inicial, pero UI única
+
+
+8. ¿Por qué Font Awesome?
+   
+   - Iconos vectoriales (escalables)
+   - Consistencia visual
+   - Más profesional que emojis
+   - CDN rápido
+
+
+SEGURIDAD
+══════════
+
+9. ¿Por qué python-decouple para variables de entorno?
+   
+   Seguridad según 12 Factor App:
+   - Tokens en .env (no en código)
+   - .env en .gitignore (no sube a GitHub)
+   - Diferentes .env por ambiente (dev/prod)
+   
+   Sin esto: Tokens quedarían hardcoded y expuestos
+
+
+10. ¿Por qué LOGIN_REQUIRED en vistas?
+    
+    Protección básica:
+    - Solo usuarios autenticados acceden
+    - Previene uso no autorizado
+    - Trazabilidad (quién hizo qué)
+
+
+LÓGICA DE NEGOCIO
+══════════════════
+
+11. ¿Por qué guardar precio_unitario en ItemPedido?
+    
+    Histórico exacto:
+    - Precios cambian con el tiempo
+    - Necesito saber qué se cobró REALMENTE
+    - Reportes históricos precisos
+    
+    Alternativa (mala):
+    - Usar item.receta.precio_venta siempre
+    - Problema: Si cambio precio hoy, cambiaría pedidos pasados
+
+
+12. ¿Por qué tabla UsoProducto separada?
+    
+    Performance en reportes:
+    - Precalculado en el momento
+    - Query rápida (GROUP BY mes/año)
+    
+    Sin esto:
+    - Calcular cada reporte recorriendo todos pedidos
+    - Complejidad O(n²): productos * pedidos * items
+    - Con 1000 pedidos = lento
+
+
+13. ¿Por qué unique_together en IngredienteReceta?
+    
+    Previene bugs:
+    - No puedo agregar "Tomate" dos veces a misma receta
+    - Validación a nivel BD (más seguro que código)
+
+
+═══════════════════════════════════════════════════════════════════════════════
+9. INSTALACIÓN Y CONFIGURACIÓN
+═══════════════════════════════════════════════════════════════════════════════
+
+REQUISITOS PREVIOS
+═══════════════════
+- Python 3.8+
+- pip (gestor de paquetes Python)
+- Git (opcional para clonar repo)
+
+PASOS DE INSTALACIÓN
+═════════════════════
+
+1. Clonar/Descargar Proyecto
+   ```
+   cd Desktop
+   (Proyecto ya está en Desktop/restotup)
+   ```
+
+2. Crear Entorno Virtual
+   ```
+   python -m venv venv
+   ```
+   
+   Propósito: Aislar dependencias del proyecto del Python global
+
+3. Activar Entorno Virtual
+   ```
+   # Windows
+   venv\Scripts\activate
+   
+   # Linux/Mac
+   source venv/bin/activate
+   ```
+
+4. Instalar Dependencias
+   ```
+   pip install -r requirements.txt
+   ```
+   
+   Contenido requirements.txt:
+   - Django==4.2.26
+   - python-decouple
+   - requests
+
+5. Configurar Variables de Entorno
+   
+   Crear archivo .env en raíz del proyecto:
+   ```
+   TELEGRAM_BOT_TOKEN=tu_token_aqui
+   TELEGRAM_CHAT_ID=tu_chat_id_aqui
+   ```
+   
+   (Opcional: Sistema funciona sin esto, solo sin alertas Telegram)
+
+6. Aplicar Migraciones
+   ```
+   python manage.py migrate
+   ```
+   
+   Esto crea tablas en db.sqlite3
+
+7. Crear Datos Iniciales (Opcional)
+   ```
+   python crear_datos_iniciales.py
+   ```
+   
+   Carga ejemplos de productos, recetas, clientes
+
+8. Crear Superusuario (Admin)
+   ```
+   python manage.py createsuperuser
+   ```
+   
+   Para acceder a /admin/
+
+9. Iniciar Servidor
+   ```
+   python manage.py runserver
+   ```
+   
+   Acceder en: http://127.0.0.1:8000/
+
+
+ESTRUCTURA DE DIRECTORIOS
+═══════════════════════════
+
+restotup/
+├── clientes/           # App gestión clientes
+│   ├── models.py       # Modelos ClienteMinorista, ClienteEmpresa
+│   ├── views.py        # Vistas CRUD
+│   ├── urls.py         # Rutas
+│   └── templates/      # Plantillas HTML
+├── productos/          # App inventario
+│   ├── models.py       # Producto, Categoria, UnidadMedida
+│   ├── views.py
+│   └── ...
+├── recetas/            # App recetas
+│   ├── models.py       # Receta, IngredienteReceta
+│   └── ...
+├── personal/           # App empleados
+│   ├── models.py       # Empleado
+│   └── ...
+├── pedidos/            # App pedidos
+│   ├── models.py       # Pedido, ItemPedido, UsoProducto
+│   ├── views.py        # Lógica de workflow
+│   ├── utils.py        # Alerta Telegram
+│   └── ...
+├── restotup/           # Configuración proyecto
+│   ├── settings.py     # Config Django
+│   ├── urls.py         # Rutas principales
+│   └── wsgi.py
+├── static/             # CSS, JS, imágenes
+├── templates/          # Templates globales
+│   └── base.html       # Template base
+├── db.sqlite3          # Base de datos
+├── manage.py           # CLI Django
+└── requirements.txt    # Dependencias
+
+
+═══════════════════════════════════════════════════════════════════════════════
+10. CONCLUSIONES
+═══════════════════════════════════════════════════════════════════════════════
+
+OBJETIVOS CUMPLIDOS
+════════════════════
+
+✓ Sistema completo de gestión de restaurante
+✓ Control de inventario en tiempo real
+✓ Gestión de recetas con costeo automático
+✓ Workflow de pedidos con múltiples estados
+✓ Alertas automáticas de stock bajo
+✓ Reportes mensuales de uso y ventas
+✓ Interfaz moderna y responsive
+✓ Separación de tipos de clientes
+✓ Gestión de personal por roles
+
+
+TECNOLOGÍAS APLICADAS
+═══════════════════════
+
+- Patrón MTV (separación de responsabilidades)
+- ORM de Django (abstracción de BD)
+- Generic Foreign Keys (relaciones flexibles)
+- Herencia de modelos (DRY - Don't Repeat Yourself)
+- Signals/Hooks (acciones automáticas)
+- Template inheritance (reutilización de UI)
+- Aggregate/Annotate (queries optimizadas)
+- API REST consumption (Telegram)
+- Environment variables (seguridad)
+
+
+CONCEPTOS AVANZADOS IMPLEMENTADOS
+═══════════════════════════════════
+
+1. Soft Delete: Preservación de datos históricos
+2. Audit Trail: Timestamps automáticos
+3. Calculated Properties: Métodos @property para lógica derivada
+4. Data Validation: Unique constraints, PROTECT on_delete
+5. Decimal Precision: Exactitud en cálculos monetarios
+6. Denormalization: Tabla UsoProducto para performance
+7. State Machine: Workflow de estados de pedido
+8. Price Freezing: Guardar precio en momento de venta
+
+
+ESCALABILIDAD
+══════════════
+
+El sistema está preparado para crecer:
+
+1. Migrar a PostgreSQL: Cambiar 3 líneas en settings.py
+2. Agregar usuarios Django: Sistema auth ya incluido
+3. API REST: Posible con Django REST Framework
+4. Multi-restaurant: Agregar modelo Sucursal
+5. Menú digital: Crear app frontend conectada
+6. Delivery: Extender estados de pedido
+
+
+MEJORAS FUTURAS SUGERIDAS
+═══════════════════════════
+
+1. Dashboard con gráficos (Chart.js)
+2. Exportar reportes a PDF/Excel
+3. Integración con POS (punto de venta)
+4. App móvil para tomar pedidos (React Native + API)
+5. Sistema de reservas
+6. Gestión de mesas
+7. Propinas y división de cuenta
+8. Integración con mercado pago/stripe
+
+
+LECCIONES APRENDIDAS
+══════════════════════
+
+1. La planificación de modelos es CRÍTICA
+   - Cambiar estructura después es costoso
+   - Pensar en relaciones desde inicio
+
+2. Validación a nivel de BD > validación en código
+   - unique_together, on_delete=PROTECT previenen bugs
+
+3. Optimización prematura es mala, pero queries N+1 son peores
+   - select_related(), prefetch_related() esenciales
+
+4. Testing manual es insuficiente
+   - Unit tests habrían detectado bugs más rápido
+
+5. Documentación del código es inversión
+   - Docstrings facilitan mantenimiento futuro
+
+
+VALOR ACADÉMICO
+════════════════
+
+Este proyecto demuestra:
+
+✓ Dominio de framework web moderno (Django)
+✓ Diseño de base de datos relacionales
+✓ Implementación de lógica de negocio compleja
+✓ Integración con APIs externas (Telegram)
+✓ Aplicación de buenas prácticas (12 Factor App)
+✓ Pensamiento en arquitectura escalable
+✓ Resolución de problemas reales de negocio
+✓ Balance entre teoría (patrones) y práctica (código funcional)
+
+
+APLICABILIDAD REAL
+═══════════════════
+
+Este sistema puede usarse en:
+- Restaurantes pequeños/medianos
+- Cafeterías
+- Panaderías con producción propia
+- Catering empresarial
+- Food trucks
+
+Con adaptaciones menores:
+- Supermercados (quitar recetas, agregar códigos de barra)
+- Farmacias (agregar control de vencimientos)
+- Tiendas retail (simplificar a productos + ventas)
+
+
+═══════════════════════════════════════════════════════════════════════════════
+
+RESUMEN EJECUTIVO
+═════════════════
+
+RestoTup es un sistema de gestión de restaurantes desarrollado con Django que
+integra control de inventario, costeo de recetas, workflow de pedidos y 
+reportes analíticos. Utiliza arquitectura MTV, base de datos relacional SQLite,
+y features avanzadas como Generic Foreign Keys, alertas Telegram en tiempo real,
+y optimización de queries mediante ORM de Django.
+
+El sistema demuestra aplicación práctica de conceptos de ingeniería de software:
+separación de responsabilidades, integridad referencial, soft delete, price
+freezing, denormalization estratégica, y seguridad mediante variables de entorno.
+
+Preparado para escalar mediante migración a PostgreSQL y extensión modular a
+través de apps Django adicionales.
+
+═══════════════════════════════════════════════════════════════════════════════
+
+INFORMACIÓN DEL PROYECTO
+═════════════════════════
+
+Nombre: RestoTup
+Versión: 1.0.0
+Framework: Django 4.2.26
+Lenguaje: Python 3.14.0
+Base de Datos: SQLite3
+Autor: [Tu Nombre]
+Fecha: Noviembre 2025
+Propósito: Proyecto Final - [Nombre de la Materia]
+
+═══════════════════════════════════════════════════════════════════════════════
+                            FIN DE LA DOCUMENTACIÓN
+═══════════════════════════════════════════════════════════════════════════════

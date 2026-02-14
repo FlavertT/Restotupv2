@@ -1,0 +1,4 @@
+Django>=4.2,<5.0
+python-telegram-bot>=20.0
+pillow
+python-decouple
